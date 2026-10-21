@@ -35,31 +35,41 @@ sportsbench backtest --demo
 ```
 
 ```
-                         Backtest · sorted by brier
+                  Full-time result · sorted by brier   (+ 3 more markets)
  #  Model             Picks  Win%   Brier   ROI%    Units   CLV%    ECE     Err
- 1  GPT-5             300    49.3%  0.6355  -18.8%  -56.29  -0.16%  0.131   0
- 2  Claude Opus 4.8   300    49.3%  0.6360  -18.6%  -55.80  -0.17%  0.078   0
- 3  Gemini 3 Pro      300    48.7%  0.6397  -20.4%  -61.29  -0.13%  0.134   0
- 4  Grok 4            300    48.0%  0.6407  -22.1%  -66.26  -0.13%  0.241   0
- 5  Llama 3 (local)   293    48.8%  0.6459  -20.5%  -60.08  -0.12%  0.184   7
- 6  DeepSeek V3       295    48.1%  0.6466  -22.4%  -66.09  -0.12%  0.277   5
+ 1  GPT-5             200    48.5%  0.6293  -6.9%   -13.86  0.04%   0.060   0
+ 2  Claude Opus 4.8   200    49.0%  0.6312  -5.8%   -11.58  0.04%   0.054   0
+ 3  Grok 4            200    47.5%  0.6355  -10.0%  -19.91  0.00%   0.170   0
+ 4  Gemini 3 Pro      200    48.5%  0.6364  -6.9%   -13.71  0.05%   0.070   0
+ 5  Llama 3 (local)   188    48.9%  0.6425  -6.1%   -11.55  0.04%   0.120  12
+ 6  DeepSeek V3       199    47.2%  0.6444  -10.1%  -20.01  -0.02%  0.200   1
 ```
 
-> The sample is synthetic, but the lesson is real and the same one the live site shows:
-> **win rate barely separates the models — calibration does.** And flat‑betting every pick
-> bleeds the bookmaker's margin, which is why the value finder (below) matters.
+The demo grades **four markets** (full‑time result, O/U goals, BTTS, corners) — one
+leaderboard each. The sample is synthetic, but the lesson is the same one the live
+site shows: **win rate barely separates the models — calibration does**, and flat‑betting
+every pick bleeds the margin (which is why the value finder matters). On some markets the
+sharp models genuinely clear it — corners O/U runs positive ROI in the demo.
 
 ## Run it for real
 
 ```bash
 sportsbench init                     # writes sportsbench.config.yaml
-# put your keys in a .env file (OPENAI_API_KEY=..., ANTHROPIC_API_KEY=..., etc.)
+
+# EASIEST: one OpenRouter key runs every model. Put it in a .env file:
+#   OPENROUTER_API_KEY=sk-or-...
+# (or bring per-provider keys: OPENAI_API_KEY=..., ANTHROPIC_API_KEY=..., or Ollama for free/local)
 
 sportsbench predict --source demo    # every model predicts, picks are locked
-sportsbench grade                    # fetch results, print the leaderboard
+sportsbench grade                    # fetch results, print a leaderboard per market
 sportsbench value --min-edge 0.05    # where the models beat the bookmaker's price
 sportsbench report --html out.html   # a shareable, branded leaderboard page
 ```
+
+> **One key for every model.** Set `OPENROUTER_API_KEY` and the default config routes
+> GPT-5, Claude, Gemini, Grok and DeepSeek through [OpenRouter](https://openrouter.ai) —
+> no juggling five dashboards. Prefer your own provider keys (or local Ollama)? The
+> config has both, commented and ready.
 
 ### Get real games the easy way (free)
 
@@ -113,6 +123,31 @@ Value bets (min edge +5%)
 ```
 
 De‑vig (multiplicative or power), expected value, and fractional‑Kelly staking are built in. Guards against the longshot trap are on by default. *Informational only — not betting advice.*
+
+## Any market, any sport — in one run
+
+SportsBench isn't limited to match result. Predict and grade **many markets at once**:
+
+```bash
+sportsbench markets --sport football          # list what's available
+sportsbench predict -m 1x2 -m ou_goals@2.5 -m btts -m correct_score -m ou_corners@9.5
+sportsbench grade                             # a separate leaderboard per market
+```
+
+Built‑in markets include **1X2, Double chance, Draw‑no‑bet, BTTS, Correct score,
+Over/Under** (goals, corners, cards, tennis games/aces, basketball points),
+**handicaps/spreads**, match winner and moneyline — configurable per sport in
+`sportsbench.config.yaml`. Each market is a few lines to add (a set of selections
+plus a settle rule), and grading/value adapt automatically. Lines use `@`:
+`ou_goals@2.5`, `ou_corners@9.5`, `spread@-1.5`.
+
+```
+             Total corners O/U (ou_corners@9.5) · sorted by brier
+ #  Model           Picks  Win%   Brier   ROI%   Units  CLV%   ECE
+ 1  Gemini 3 Pro    200    73.0%  0.3491  +4.2%  +8.31  0.04%  0.067
+ 2  Claude Opus 4.8 200    73.0%  0.3545  +4.0%  +8.03  0.05%  0.101
+ …
+```
 
 ## Supported providers (bring your own key)
 

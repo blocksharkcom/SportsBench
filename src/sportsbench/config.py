@@ -63,10 +63,17 @@ class Config:
     kelly_fraction: float = 0.25
     branding: bool = True
     modelfights: ModelFightsConfig = field(default_factory=ModelFightsConfig)
+    markets: dict = field(default_factory=dict)  # sport -> [market specs]
     path: Optional[str] = None
 
     def active_models(self) -> list[ModelConfig]:
         return [m for m in self.models if m.enabled]
+
+    def market_specs(self, sport: Optional[str] = None) -> list:
+        """Configured markets for a sport, falling back to sensible defaults."""
+        from .markets import DEFAULT_MARKETS
+        sport = sport or self.sport
+        return self.markets.get(sport) or DEFAULT_MARKETS.get(sport, ["1x2"])
 
     @classmethod
     def find(cls, start: Optional[str] = None) -> Optional[str]:
@@ -97,5 +104,6 @@ class Config:
             kelly_fraction=float(defaults.get("kelly_fraction", 0.25)),
             branding=bool(data.get("branding", True)),
             modelfights=ModelFightsConfig(**mf) if mf else ModelFightsConfig(),
+            markets=data.get("markets", {}) or {},
             path=path,
         )

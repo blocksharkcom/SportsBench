@@ -74,32 +74,46 @@ def models(config: Optional[str] = typer.Option(None, "--config", "-c")):
 
 
 @app.command()
+def markets(sport: str = typer.Option("football", "--sport", help="football|tennis|basketball")):
+    """List the betting markets you can predict + grade for a sport."""
+    from .markets import markets_for_sport, DEFAULT_MARKETS
+    t = Table("Market spec", title=f"Markets available for {sport}")
+    for m in markets_for_sport(sport):
+        t.add_row(m)
+    console.print(t)
+    console.print(f"[dim]Enabled by default: {', '.join(DEFAULT_MARKETS.get(sport, ['1x2']))}[/dim]")
+    console.print("[dim]Lines use @: ou_goals@2.5, ou_corners@9.5, ou_aces@20.5, spread@-1.5[/dim]")
+    console.print("[dim]Run several at once:  sportsbench predict -m 1x2 -m ou_goals@2.5 -m btts[/dim]")
+
+
+@app.command()
 def backtest(
     demo: bool = typer.Option(False, "--demo", help="Use the bundled offline sample."),
     source: str = typer.Option("demo", "--source", "-s"),
+    market: list[str] = typer.Option(None, "--market", "-m", help="Market(s); default = all in the data."),
     sort: str = typer.Option("brier", "--sort", help="brier|roi|win_rate|clv"),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """Grade a dataset end-to-end and print the leaderboard. --demo needs no keys."""
+    """Grade a dataset end-to-end and print a leaderboard per market. --demo needs no keys."""
     from .sources import get_source
     cfg = _cfg(config)
     src = get_source("demo" if demo else source)
-    fixtures = src.upcoming(limit=500)
+    fixtures = src.upcoming(limit=1000)
     results = src.results([f.id for f in fixtures])
 
     if demo:
-        # the sample ships pre-made predictions so it runs with zero keys
+        # the sample ships pre-made predictions (all markets) so it runs with zero keys
         from .sources.files import _read_json
         from importlib import resources
         from .types import Prediction
         with resources.as_file(resources.files("sportsbench.data")) as d:
             preds = [Prediction.from_dict(x) for x in _read_json(str(d / "demo_predictions.json"))]
     else:
-        preds = run_predictions(cfg, fixtures, on_done=lambda p: _tick(p))
+        preds = run_predictions(cfg, fixtures, markets=_resolve_markets(cfg, market),
+                                on_done=lambda p: _tick(p))
 
-    scores = rank(score_predictions(preds, results, cfg.stake_unit,
-                                     fixtures={f.id: f for f in fixtures}), by=sort)
-    _print_leaderboard(scores, f"Backtest · sorted by {sort}")
+    scores = score_predictions(preds, results, cfg.stake_unit, fixtures={f.id: f for f in fixtures})
+    _print_leaderboards(scores, sort, only=market)
     show_banner(console, cfg.branding)
 
 
@@ -108,12 +122,15 @@ def predict(
     source: str = typer.Option("demo", "--source", "-s",
                                help="demo | modelfights (free key) | football-data | json"),
     league: Optional[str] = typer.Option(None, "--league", "-l"),
+    market: list[str] = typer.Option(None, "--market", "-m",
+                                     help="Market(s) to run; repeatable. Default = config/defaults."),
     limit: int = typer.Option(20, "--limit", "-n"),
     fixtures_path: Optional[str] = typer.Option(None, "--fixtures"),
     db: str = typer.Option("sportsbench.db", "--db"),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """Run every configured model on upcoming fixtures and store locked predictions."""
+    """Run every configured model on upcoming fixtures, across one or more markets,
+    and store locked predictions."""
     from .sources import get_source
     cfg = _cfg(config)
     if not cfg.active_models():
@@ -122,9 +139,11 @@ def predict(
     kwargs = {"fixtures_path": fixtures_path} if fixtures_path else {}
     src = get_source(source, **kwargs)
     fixtures = src.upcoming(league, limit)
+    markets = _resolve_markets(cfg, market)
     console.print(f"Running [bold]{len(cfg.active_models())}[/bold] models on "
-                  f"[bold]{len(fixtures)}[/bold] fixtures…")
-    preds = run_predictions(cfg, fixtures, on_done=_tick)
+                  f"[bold]{len(fixtures)}[/bold] fixtures × [bold]{len(markets)}[/bold] "
+                  f"markets [dim]({', '.join(markets)})[/dim]…")
+    preds = run_predictions(cfg, fixtures, markets=markets, on_done=_tick)
     store = Store(db)
     store.save_fixtures(fixtures)
     store.save_predictions(preds)
@@ -140,10 +159,12 @@ def game(
     source: str = typer.Option("modelfights", "--source", "-s",
                                help="modelfights (free key) | demo | football-data"),
     league: Optional[str] = typer.Option(None, "--league", "-l"),
+    market: list[str] = typer.Option(None, "--market", "-m", help="Market(s); default = config/defaults."),
     db: str = typer.Option("sportsbench.db", "--db"),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """Get every model's call on ONE specific game — a full prediction snapshot.
+    """Get every model's call on ONE specific game — a full prediction snapshot,
+    across one or more markets.
 
     Shows the fixture, the odds, each model's pick + probabilities + reasoning, the
     consensus, and where the models beat the bookmaker's price.
@@ -151,7 +172,7 @@ def game(
     from .sources import get_source
     from .pro import ModelFightsClient, NeedsKey, NeedsPro, ProError
     from .value import consensus, find_value
-    from .brief import market_for
+    from .markets import get_market
     cfg = _cfg(config)
     if not cfg.active_models():
         console.print("[red]No models configured.[/red] Run [bold]sportsbench init[/bold] and add keys.")
@@ -180,39 +201,44 @@ def game(
             raise typer.Exit(1)
         fx = fixtures[choice - 1]
 
-    market = market_for(fx)
+    specs = _resolve_markets(cfg, market, fx.sport)
     console.print(f"\n[bold]{fx.label()}[/bold]  [dim]· {fx.league} · {fx.kickoff}[/dim]")
-    if fx.odds:
-        console.print("  Market odds  " + "  ".join(
-            f"{m}: [bold]{fx.odds.price(m)}[/bold]" for m in market if fx.odds.price(m)))
-    console.print(f"  Running {len(cfg.active_models())} models…\n")
+    console.print(f"  Running {len(cfg.active_models())} models × {len(specs)} markets…\n")
 
-    preds = run_predictions(cfg, [fx], on_done=_tick)
+    preds = run_predictions(cfg, [fx], markets=specs, on_done=_tick)
     Store(db).save_fixtures([fx])
     Store(db).save_predictions(preds)
 
-    t = Table("Model", *[m.capitalize() for m in market], "Pick", "Conf", "Why",
-              title=f"Snapshot · {fx.label()}")
-    for p in sorted(preds, key=lambda x: (x.error is not None, -x.confidence)):
-        if p.error:
-            t.add_row(p.model, *["—"] * len(market), "[red]error[/red]", "—", p.error[:40])
-            continue
-        cells = [f"{p.probs.get(m,0):.0%}" for m in market]
-        t.add_row(p.model, *cells, f"[green]{p.pick}[/green]", f"{p.confidence:.0%}",
-                  (p.rationale or "")[:46])
-    cons = consensus([p for p in preds if not p.error], market)
-    t.add_section()
-    t.add_row("[bold]CONSENSUS[/bold]", *[f"[bold]{cons.get(m,0):.0%}[/bold]" for m in market],
-              f"[bold]{max(cons, key=cons.get)}[/bold]", "", "")
-    console.print(t)
-
-    bets = find_value([fx], preds, min_edge=0.03, kelly_fraction=cfg.kelly_fraction,
-                      devig_method=cfg.devig, source="consensus")
-    if bets:
-        console.print("\n[bold]Value vs the bookmaker:[/bold]")
+    for spec in specs:
+        mk = get_market(spec)
+        keys = mk.selection_keys()
+        mpreds = [p for p in preds if (p.market or "1x2") == spec]
+        odds = fx.market_odds(spec) or {}
+        head = f"Snapshot · {mk.name}"
+        if odds:
+            head += "   odds " + " ".join(f"{mk.label_for(k)}:{v}" for k, v in odds.items())
+        # compact, works for any market (even 17-way correct score): pick + P(pick)
+        t = Table("Model", "Pick", "P(pick)", "Conf", "Why", title=head)
+        for p in sorted(mpreds, key=lambda x: (x.error is not None, -x.confidence)):
+            if p.error:
+                t.add_row(p.model, "[red]error[/red]", "—", "—", p.error[:44])
+                continue
+            t.add_row(p.model, f"[green]{mk.label_for(p.pick)}[/green]",
+                      f"{p.probs.get(p.pick,0):.0%}", f"{p.confidence:.0%}", (p.rationale or "")[:42])
+        cons = consensus([p for p in mpreds if not p.error], keys)
+        if any(cons.values()):
+            cpick = max(cons, key=cons.get)
+            t.add_section()
+            t.add_row("[bold]CONSENSUS[/bold]", f"[bold]{mk.label_for(cpick)}[/bold]",
+                      f"[bold]{cons[cpick]:.0%}[/bold]", "", "")
+        console.print(t)
+        bets = find_value([fx], preds, market=spec, min_edge=0.02,
+                          kelly_fraction=cfg.kelly_fraction, devig_method=cfg.devig, source="consensus")
         for b in bets:
-            console.print(f"  {b.pick:5s}  consensus {b.model_prob:.0%} vs fair {b.fair_prob:.0%} "
-                          f"@ {b.decimal_odds:g}  [green]edge {b.edge:+.0%}[/green]  kelly {b.kelly:.1%}")
+            console.print(f"  [green]value[/green] {b.label}: consensus {b.model_prob:.0%} vs "
+                          f"fair {b.fair_prob:.0%} @ {b.decimal_odds:g}  edge {b.edge:+.0%}  kelly {b.kelly:.1%}")
+        console.print()
+
     console.print("[dim]Informational only — not betting advice.[/dim]")
     show_banner(console, cfg.branding)
 
@@ -221,10 +247,11 @@ def game(
 def grade(
     source: str = typer.Option("demo", "--source", "-s"),
     db: str = typer.Option("sportsbench.db", "--db"),
+    market: list[str] = typer.Option(None, "--market", "-m", help="Filter to market(s)."),
     sort: str = typer.Option("roi", "--sort"),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """Fetch results for stored predictions and print the leaderboard."""
+    """Fetch results for stored predictions and print a leaderboard per market."""
     from .sources import get_source
     cfg = _cfg(config)
     store = Store(db)
@@ -236,47 +263,53 @@ def grade(
     results = get_source(source).results(fids)
     store.save_results(results)
     fxmap = {f.id: f for f in store.fixtures()}
-    scores = rank(score_predictions(preds, results, cfg.stake_unit, fixtures=fxmap), by=sort)
-    _print_leaderboard(scores, f"Leaderboard · sorted by {sort}")
+    scores = score_predictions(preds, results, cfg.stake_unit, fixtures=fxmap)
+    _print_leaderboards(scores, sort, only=market)
     show_banner(console, cfg.branding)
 
 
 @app.command()
 def leaderboard(
     db: str = typer.Option("sportsbench.db", "--db"),
+    market: list[str] = typer.Option(None, "--market", "-m", help="Filter to market(s)."),
     sort: str = typer.Option("roi", "--sort"),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """Show standings from already-graded predictions."""
+    """Show standings (per market) from already-graded predictions."""
     cfg = _cfg(config)
     store = Store(db)
     fxmap = {f.id: f for f in store.fixtures()}
-    scores = rank(score_predictions(store.predictions(), store.results(),
-                                    cfg.stake_unit, fixtures=fxmap), by=sort)
-    _print_leaderboard(scores, f"Leaderboard · sorted by {sort}")
+    scores = score_predictions(store.predictions(), store.results(),
+                               cfg.stake_unit, fixtures=fxmap)
+    _print_leaderboards(scores, sort, only=market)
     show_banner(console, cfg.branding)
 
 
 @app.command()
 def value(
     db: str = typer.Option("sportsbench.db", "--db"),
+    market: list[str] = typer.Option(None, "--market", "-m", help="Market(s); default = all in the data."),
     min_edge: float = typer.Option(0.03, "--min-edge", help="Minimum EV per unit."),
     source: str = typer.Option("consensus", "--from", help="'consensus' or a model name."),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """Find value bets: where the models beat the bookmaker's price."""
+    """Find value bets across markets: where the models beat the bookmaker's price."""
     cfg = _cfg(config)
     store = Store(db)
-    bets = find_value(store.fixtures(), store.predictions(),
-                      min_edge=min_edge, kelly_fraction=cfg.kelly_fraction,
-                      devig_method=cfg.devig, source=source)
+    fixtures, preds = store.fixtures(), store.predictions()
+    specs = market or sorted({p.market or "1x2" for p in preds})
+    bets = []
+    for spec in specs:
+        bets += find_value(fixtures, preds, market=spec, min_edge=min_edge,
+                           kelly_fraction=cfg.kelly_fraction, devig_method=cfg.devig, source=source)
+    bets.sort(key=lambda b: b.edge, reverse=True)
     if not bets:
         console.print("[yellow]No value found at this threshold.[/yellow]")
         raise typer.Exit()
-    t = Table("Fixture", "Pick", "From", "Model%", "Fair%", "Odds", "Edge", "Kelly",
+    t = Table("Fixture", "Market", "Pick", "From", "Model%", "Fair%", "Odds", "Edge", "Kelly",
               title=f"Value bets (min edge {min_edge:+.0%})")
     for b in bets:
-        t.add_row(b.fixture, b.pick, b.source, f"{b.model_prob:.0%}", f"{b.fair_prob:.0%}",
+        t.add_row(b.fixture, b.market, b.label, b.source, f"{b.model_prob:.0%}", f"{b.fair_prob:.0%}",
                   f"{b.decimal_odds:g}", f"[green]{b.edge:+.1%}[/green]", f"{b.kelly:.1%}")
     console.print(t)
     console.print("[dim]Informational only — not betting advice. Stake responsibly.[/dim]")
@@ -288,20 +321,27 @@ def report(
     db: str = typer.Option("sportsbench.db", "--db"),
     html: Optional[str] = typer.Option(None, "--html", help="Write branded HTML here."),
     fmt: str = typer.Option("markdown", "--format", "-f", help="markdown|json|csv"),
+    market: Optional[str] = typer.Option(None, "--market", "-m", help="Which market (default 1x2)."),
     sort: str = typer.Option("roi", "--sort"),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """Export the leaderboard (markdown/json/csv, or a shareable branded HTML page)."""
+    """Export one market's leaderboard (markdown/json/csv, or a branded HTML page)."""
     cfg = _cfg(config)
     store = Store(db)
     fxmap = {f.id: f for f in store.fixtures()}
-    scores = rank(score_predictions(store.predictions(), store.results(),
-                                    cfg.stake_unit, fixtures=fxmap), by=sort)
+    allscores = score_predictions(store.predictions(), store.results(), cfg.stake_unit, fixtures=fxmap)
+    specs = []
+    for s in allscores:
+        if s.market not in specs:
+            specs.append(s.market)
+    spec = market or ("1x2" if "1x2" in specs else (specs[0] if specs else "1x2"))
+    scores = rank([s for s in allscores if s.market == spec], by=sort)
+    title = f"SportsBench — {_market_name(spec)}"
     if html:
-        Path(html).write_text(to_html(scores))
-        console.print(f"[green]Wrote {html}[/green] (branded — links to modelfights.com)")
+        Path(html).write_text(to_html(scores, title))
+        console.print(f"[green]Wrote {html}[/green] ({_market_name(spec)} — branded, links to modelfights.com)")
         return
-    out = {"markdown": to_markdown, "json": lambda s: to_json(s), "csv": to_csv}[fmt](scores)
+    out = {"markdown": lambda s: to_markdown(s, title), "json": to_json, "csv": to_csv}[fmt](scores)
     console.print(out)
 
 
@@ -358,6 +398,40 @@ def _tick(p):
     console.print(f"  {mark} {p.model:<22} {('ERROR: ' + p.error) if p.error else p.pick}")
 
 
+def _resolve_markets(cfg, market_opt, sport=None):
+    """Market specs from --market (repeatable) or the config's per-sport defaults."""
+    if market_opt:
+        return list(market_opt)
+    return cfg.market_specs(sport or cfg.sport)
+
+
+def _market_name(spec: str) -> str:
+    try:
+        from .markets import get_market
+        m = get_market(spec)
+        return f"{m.name} ({spec})" if m.line is not None else m.name
+    except Exception:
+        return spec
+
+
+def _print_leaderboards(scores, sort: str, only=None):
+    """Print one leaderboard table per market present in the scores."""
+    specs = []
+    for s in scores:
+        if s.market not in specs:
+            specs.append(s.market)
+    if only:
+        wanted = set(only)
+        specs = [s for s in specs if s in wanted] or list(wanted)
+    if not specs:
+        console.print("[yellow]Nothing to grade yet.[/yellow]")
+        return
+    for spec in specs:
+        sub = rank([s for s in scores if s.market == spec], by=sort)
+        if sub:
+            _print_leaderboard(sub, f"{_market_name(spec)} · sorted by {sort}")
+
+
 def _print_leaderboard(scores, title: str):
     t = Table("#", "Model", "Picks", "Win%", "Brier", "ROI%", "Units", "CLV%", "ECE",
               "Err", title=title)
@@ -374,7 +448,12 @@ def _s(v, suffix="") -> str:
 
 
 _STARTER_CONFIG = """# SportsBench — https://modelfights.com
-# Bring your own API keys (put them in a .env file next to this config).
+#
+# EASIEST SETUP: one OpenRouter key runs every model.
+#   1. Get a key at https://openrouter.ai/keys
+#   2. Put it in a .env file next to this config:  OPENROUTER_API_KEY=sk-or-...
+#   3. sportsbench predict --source demo   (or --source modelfights for real games)
+#
 defaults:
   sport: football
   devig: multiplicative   # or: power
@@ -382,31 +461,27 @@ defaults:
   kelly_fraction: 0.25
 branding: true
 
+# Markets predicted + graded by default, per sport. See: sportsbench markets --sport football
+markets:
+  football:   [1x2, ou_goals@2.5, btts, correct_score, ou_corners@9.5]
+  tennis:     [match_winner, ou_games@22.5, ou_aces@20.5]
+  basketball: [moneyline, ou_points@210.5, spread@-5.5]
+
+# One key, every model (recommended) — all routed through OpenRouter:
 models:
-  - name: GPT-5
-    provider: openai
-    model: gpt-5
-    api_key_env: OPENAI_API_KEY
-  - name: Claude Opus 4.8
-    provider: anthropic
-    model: claude-opus-4-8
-    api_key_env: ANTHROPIC_API_KEY
-  - name: Gemini 3 Pro
-    provider: google
-    model: gemini-3-pro
-    api_key_env: GEMINI_API_KEY
-  - name: Grok 4
-    provider: grok              # preset base_url for x.ai
-    model: grok-4
-    api_key_env: XAI_API_KEY
-  - name: DeepSeek V3
-    provider: deepseek
-    model: deepseek-chat
-    api_key_env: DEEPSEEK_API_KEY
-  - name: Llama 3 (local, free)
-    provider: ollama            # http://localhost:11434/v1
-    model: llama3
-    # no key needed for local Ollama
+  - { name: GPT-5,           provider: openrouter, model: openai/gpt-5,                 api_key_env: OPENROUTER_API_KEY }
+  - { name: Claude Opus 4.8, provider: openrouter, model: anthropic/claude-opus-4,      api_key_env: OPENROUTER_API_KEY }
+  - { name: Gemini 3 Pro,    provider: openrouter, model: google/gemini-3-pro,          api_key_env: OPENROUTER_API_KEY }
+  - { name: Grok 4,          provider: openrouter, model: x-ai/grok-4,                   api_key_env: OPENROUTER_API_KEY }
+  - { name: DeepSeek V3,     provider: openrouter, model: deepseek/deepseek-chat,        api_key_env: OPENROUTER_API_KEY }
+  - { name: Llama 3 (local), provider: ollama,     model: llama3 }   # free, local, no key
+
+# Prefer your OWN per-provider keys? Swap the lines above for these and set each *_API_KEY:
+#  - { name: GPT-5,           provider: openai,    model: gpt-5,           api_key_env: OPENAI_API_KEY }
+#  - { name: Claude Opus 4.8, provider: anthropic, model: claude-opus-4-8, api_key_env: ANTHROPIC_API_KEY }
+#  - { name: Gemini 3 Pro,    provider: google,    model: gemini-3-pro,    api_key_env: GEMINI_API_KEY }
+#  - { name: Grok 4,          provider: grok,      model: grok-4,          api_key_env: XAI_API_KEY }
+#  - { name: DeepSeek V3,     provider: deepseek,  model: deepseek-chat,   api_key_env: DEEPSEEK_API_KEY }
 
 # modelfights.com — the easiest way to get real data.
 #   FREE key (just sign up): fetch upcoming fixtures, events + odds across 45+ leagues

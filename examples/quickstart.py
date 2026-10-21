@@ -22,15 +22,18 @@ def main():
     with resources.as_file(resources.files("sportsbench.data")) as d:
         preds = [Prediction.from_dict(x) for x in _read_json(str(d / "demo_predictions.json"))]
 
-    # 3. grade + rank
-    scores = sb.rank(sb.score_predictions(preds, results, fixtures=fixtures_by_id), by="brier")
-    print(to_markdown(scores, "Demo leaderboard"))
+    # 3. grade + rank — a leaderboard per market
+    all_scores = sb.score_predictions(preds, results, fixtures=fixtures_by_id)
+    for spec in ["1x2", "ou_goals@2.5", "btts", "ou_corners@9.5"]:
+        market_scores = sb.rank([s for s in all_scores if s.market == spec], by="brier")
+        print(to_markdown(market_scores, sb.get_market(spec).name))
 
-    # 4. where did the consensus beat the bookmaker?
-    bets = sb.find_value(fixtures, preds, min_edge=0.08)
-    print(f"\n{len(bets)} value bets found. Top 5:")
-    for b in bets[:5]:
-        print(f"  {b.fixture:28s} {b.pick:5s}  edge {b.edge:+.0%}  @ {b.decimal_odds}  kelly {b.kelly:.1%}")
+    # 4. where did the consensus beat the bookmaker? (per market)
+    for spec in ["1x2", "ou_corners@9.5"]:
+        bets = sb.find_value(fixtures, preds, market=spec, min_edge=0.08)
+        print(f"\n{len(bets)} value bets on {spec} (edge>=8%). Top 3:")
+        for b in bets[:3]:
+            print(f"  {b.fixture:28s} {b.label:12s}  edge {b.edge:+.0%}  @ {b.decimal_odds}  kelly {b.kelly:.1%}")
 
 
 if __name__ == "__main__":

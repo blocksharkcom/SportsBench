@@ -11,6 +11,7 @@ from typing import Optional
 
 from ..types import OUTCOMES, Prediction, Result, Fixture
 from ..odds import clv as _clv
+from ..markets import get_market
 
 _EPS = 1e-15
 
@@ -30,6 +31,7 @@ def log_loss(probs: dict[str, float], actual: str) -> float:
 class ModelScore:
     model: str
     provider: str = ""
+    market: str = "1x2"
     settled: int = 0
     won: int = 0
     errors: int = 0
@@ -77,6 +79,7 @@ class ModelScore:
         return {
             "model": self.model,
             "provider": self.provider,
+            "market": self.market,
             "settled": self.settled,
             "win_rate": self.win_rate,
             "brier": self.brier,
@@ -105,21 +108,31 @@ def score_predictions(
     fixture's closing odds.
     """
     fixtures = fixtures or {}
-    scores: dict[str, ModelScore] = {}
+    scores: dict = {}
+    _market_cache: dict = {}
     for p in predictions:
-        key = p.model
-        s = scores.setdefault(key, ModelScore(model=p.model, provider=p.provider))
+        spec = p.market or "1x2"
+        key = (p.model, spec)
+        s = scores.setdefault(key, ModelScore(model=p.model, provider=p.provider, market=spec))
         if p.error:
             s.errors += 1
             continue
         res = results.get(p.fixture_id)
         if res is None:
             continue  # not settled yet
-        actual = res.outcome
+        mk = _market_cache.get(spec)
+        if mk is None:
+            try:
+                mk = _market_cache.setdefault(spec, get_market(spec))
+            except ValueError:
+                continue  # unknown market spec — skip rather than crash
+        actual = mk.settle(res)
+        if actual is None:
+            continue  # void (e.g. draw-no-bet on a draw)
         s.settled += 1
         won = p.pick == actual
         s.won += int(won)
-        s.brier_sum += brier_multiclass(p.probs, actual)
+        s.brier_sum += brier_multiclass(p.probs, actual, mk.selection_keys())
         s.logloss_sum += log_loss(p.probs, actual)
 
         # calibration bin on stated confidence in the pick
@@ -133,10 +146,11 @@ def score_predictions(
             s.staked += stake_unit
             s.units += stake_unit * ((odds - 1.0) if won else -1.0)
 
-        # closing-line value (needs the fixture's closing odds)
+        # closing-line value (needs the fixture's closing odds for this market)
         fx = fixtures.get(p.fixture_id)
-        if odds and fx and fx.closing_odds:
-            c = _clv(odds, fx.closing_odds.price(p.pick))
+        close = fx.closing_market_odds(spec) if fx else None
+        if odds and close:
+            c = _clv(odds, close.get(p.pick))
             if c is not None:
                 s.clv_sum += c
                 s.clv_n += 1

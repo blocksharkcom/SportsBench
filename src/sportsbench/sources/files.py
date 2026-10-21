@@ -25,6 +25,7 @@ class JSONSource(FixtureSource):
                     fixture_id=str(d["fixture_id"]),
                     home_score=int(d["home_score"]),
                     away_score=int(d["away_score"]),
+                    stats=d.get("stats", {}) or {},
                 )
 
     def upcoming(self, league: str | None = None, limit: int = 20) -> list[Fixture]:

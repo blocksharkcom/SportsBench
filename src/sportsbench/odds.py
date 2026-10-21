@@ -73,6 +73,6 @@ def clv(odds_at_pick: float, closing_odds: float) -> Optional[float]:
     Positive == you took a better price than the market closed at (the sharp signal).
     Returns None if either price is missing.
     """
-    if not odds_at_pick or not closing_odds:
+    if not odds_at_pick or not closing_odds or odds_at_pick <= 1.0 or closing_odds <= 1.0:
         return None
     return implied_prob(closing_odds) - implied_prob(odds_at_pick)
