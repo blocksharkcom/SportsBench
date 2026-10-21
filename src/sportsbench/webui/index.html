@@ -46,6 +46,18 @@
   .pos{color:var(--accent)} .neg{color:#ef6b6b}
   .muted{color:var(--muted)} .center{text-align:center;padding:40px;color:var(--muted)}
   footer{border-top:1px solid var(--border);color:var(--muted);font-size:13px;padding:20px 0}
+  .controls{display:flex;gap:8px;margin:0 0 16px;flex-wrap:wrap}
+  select,input,.controls button{font:inherit;font-size:13.5px;border:1px solid var(--border);
+    background:var(--surface);color:var(--fg);border-radius:9px;padding:8px 11px}
+  .controls button{cursor:pointer;background:var(--accent);color:#07110a;border:0;font-weight:700}
+  .fxlist{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+  .fx{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:10px 14px}
+  .fx .meta{color:var(--muted);font-size:12px}
+  .fx button{cursor:pointer;background:var(--accent);color:#07110a;border:0;border-radius:8px;
+    padding:6px 12px;font-weight:700;font-size:12.5px}
+  .val{color:var(--accent);font-size:12.5px;padding:6px 14px 2px}
+  .spin{color:var(--muted);padding:26px;text-align:center}
 </style>
 </head>
 <body>
@@ -74,7 +86,18 @@
   <section id="tab-game" hidden>
     <h2>Predict a game</h2>
     <p class="lede">Pick a fixture, run every configured model across your markets, read the snapshot.
-      <span class="muted">(Coming in the next build.)</span></p>
+      Runs use your own API keys — nothing leaves your machine.</p>
+    <div class="controls">
+      <select id="src">
+        <option value="demo">demo (offline sample)</option>
+        <option value="modelfights">modelfights.com (live — needs key)</option>
+        <option value="football-data">football-data.org</option>
+      </select>
+      <input id="league" placeholder="league (e.g. epl)" />
+      <button id="loadfx">Load fixtures</button>
+    </div>
+    <div id="fixtures"></div>
+    <div id="snapshot"></div>
   </section>
 
   <section id="tab-board" hidden>
@@ -126,6 +149,41 @@ async function loadDemo(){
           <td>${fmt(r.clv,'%')}</td><td>${fmt(r.ece)}</td></tr>`).join('')}</tbody>
       </table>
     </div>`).join('');
+}
+
+$('#loadfx').onclick = loadFixtures;
+async function loadFixtures(){
+  const src=$('#src').value, league=$('#league').value.trim();
+  $('#fixtures').innerHTML='<div class="spin">Loading fixtures…</div>'; $('#snapshot').innerHTML='';
+  try{
+    const d = await (await fetch(`/api/fixtures?source=${encodeURIComponent(src)}&league=${encodeURIComponent(league)}&limit=25`)).json();
+    if(d.error){ $('#fixtures').innerHTML=`<div class="spin">${d.error}</div>`; return; }
+    if(!d.fixtures.length){ $('#fixtures').innerHTML='<div class="spin">No fixtures found.</div>'; return; }
+    $('#fixtures').innerHTML='<div class="fxlist">'+d.fixtures.map(f=>`
+      <div class="fx"><div><b>${f.label}</b> <span class="meta">· ${f.league} · ${f.kickoff}</span></div>
+      <button onclick="runGame('${f.id.replace(/'/g,"")}','${src}')">Run models →</button></div>`).join('')+'</div>';
+  }catch(e){ $('#fixtures').innerHTML='<div class="spin">Failed to load fixtures.</div>'; }
+}
+async function runGame(id, src){
+  $('#snapshot').innerHTML='<div class="spin">Running models… this can take a moment.</div>';
+  try{
+    const d = await (await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({fixture_id:id, source:src})})).json();
+    if(d.error){ $('#snapshot').innerHTML=`<div class="spin">${d.error}</div>`; return; }
+    $('#snapshot').innerHTML=`<h3 style="margin:22px 0 2px">${d.fixture.label} <span class="muted">· ${d.fixture.league}</span></h3>`
+      + d.markets.map(renderMarket).join('');
+  }catch(e){ $('#snapshot').innerHTML='<div class="spin">Run failed.</div>'; }
+}
+function renderMarket(m){
+  const odds = Object.entries(m.odds||{}).map(([k,v])=>`${k}:${v}`).join(' ');
+  const rows = m.rows.map(r => r.error
+    ? `<tr><td style="text-align:left">${r.model}</td><td colspan="3" class="neg" style="text-align:left">${r.error}</td></tr>`
+    : `<tr><td style="text-align:left">${r.model}</td><td style="text-align:left">${r.pick}</td><td>${(r.p*100).toFixed(0)}%</td><td>${(r.conf*100).toFixed(0)}%</td></tr>`).join('');
+  const cons = m.consensus ? `<tr style="border-top:2px solid var(--border)"><td style="text-align:left"><b>Consensus</b></td><td style="text-align:left"><b class="pos">${m.consensus.pick}</b></td><td><b>${(m.consensus.p*100).toFixed(0)}%</b></td><td></td></tr>`:'';
+  const val = (m.value||[]).map(v=>`<div class="val">value · ${v.label}: ${(v.model_prob*100).toFixed(0)}% vs fair ${(v.fair_prob*100).toFixed(0)}% @ ${v.odds} · edge +${(v.edge*100).toFixed(0)}% · kelly ${(v.kelly*100).toFixed(1)}%</div>`).join('');
+  return `<div class="board"><h3>${m.name} <span class="muted">${odds?'· '+odds:''}</span></h3>
+    <table><thead><tr><th style="text-align:left">Model</th><th style="text-align:left">Pick</th><th>P(pick)</th><th>Conf</th></tr></thead>
+    <tbody>${rows}${cons}</tbody></table>${val}</div>`;
 }
 
 loadState().catch(()=>{});
