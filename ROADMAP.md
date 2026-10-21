@@ -7,6 +7,8 @@ SportsBench is young. Here's where it's going — contributions very welcome.
   correct score, over/under (goals, corners, cards, tennis games/aces, basketball
   points), handicaps/spreads, match winner, moneyline — per‑sport config, multi‑market
   runs (`predict -m 1x2 -m ou_goals@2.5 …`), a leaderboard per market.
+- **Local dashboard** (`sportsbench serve`): dark web UI (zero extra deps) — demo
+  benchmark, browse fixtures + run a game to a snapshot, local leaderboard.
 - **Per‑game snapshots** (`sportsbench game`): every model's call on one match.
 - **One‑key setup** via OpenRouter (all models through a single key).
 - **modelfights.com data source** (`--source modelfights`): free key for real

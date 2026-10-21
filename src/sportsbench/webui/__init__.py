@@ -75,6 +75,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"leaderboards": _demo_leaderboards()})
             if u.path == "/api/fixtures":
                 return self._json(200, self._fixtures(parse_qs(u.query)))
+            if u.path == "/api/leaderboard":
+                return self._json(200, {"leaderboards": self._store_leaderboards()})
             return self._json(404, {"error": "not found"})
         except Exception as e:  # never crash the dev server
             return self._json(500, {"error": f"{type(e).__name__}: {e}"})
@@ -107,6 +109,28 @@ class _Handler(BaseHTTPRequestHandler):
             "id": f.id, "label": f.label(), "league": f.league, "kickoff": f.kickoff,
             "sport": f.sport, "markets": list((f.markets or {}).keys()),
         } for f in fx]}
+
+    def _store_leaderboards(self) -> list:
+        from ..store import Store
+        st = Store("sportsbench.db")
+        preds = st.predictions()
+        if not preds:
+            return []
+        fxmap = {f.id: f for f in st.fixtures()}
+        scores = score_predictions(preds, st.results(), fixtures=fxmap)
+        specs: list = []
+        for s in scores:
+            if s.market not in specs:
+                specs.append(s.market)
+        out = []
+        for spec in specs:
+            rows = [s.to_row() for s in rank([s for s in scores if s.market == spec], by="roi")]
+            try:
+                name = get_market(spec).name
+            except Exception:
+                name = spec
+            out.append({"market": spec, "name": name, "rows": rows})
+        return out
 
     def _run(self, body: dict) -> dict:
         cfg = _Handler.cfg or Config.load()

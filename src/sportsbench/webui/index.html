@@ -102,8 +102,8 @@
 
   <section id="tab-board" hidden>
     <h2>Your leaderboard</h2>
-    <p class="lede">Standings from games you've run and graded locally.
-      <span class="muted">(Coming in the next build.)</span></p>
+    <p class="lede">Standings from games you've run and graded locally — one board per market, sorted by ROI.</p>
+    <div id="board"></div>
   </section>
 </main>
 
@@ -121,6 +121,7 @@ const signed = v => v==null ? "—" : `<span class="${v>=0?'pos':'neg'}">${v>0?'
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
   for(const t of ['demo','game','board']) $('#tab-'+t).hidden = (t!==b.dataset.tab);
+  if(b.dataset.tab==='board') loadBoard();
 });
 
 async function loadState(){
@@ -134,9 +135,8 @@ async function loadState(){
   $('#cfg').innerHTML = chips.join('');
 }
 
-async function loadDemo(){
-  const {leaderboards} = await (await fetch('/api/demo')).json();
-  $('#demo').innerHTML = leaderboards.map(lb=>`
+function boardsHTML(leaderboards){
+  return leaderboards.map(lb=>`
     <div class="board">
       <h3>${lb.name} <span class="muted">· ${lb.market}</span></h3>
       <table>
@@ -149,6 +149,18 @@ async function loadDemo(){
           <td>${fmt(r.clv,'%')}</td><td>${fmt(r.ece)}</td></tr>`).join('')}</tbody>
       </table>
     </div>`).join('');
+}
+async function loadDemo(){
+  const {leaderboards} = await (await fetch('/api/demo')).json();
+  $('#demo').innerHTML = boardsHTML(leaderboards);
+}
+async function loadBoard(){
+  $('#board').innerHTML='<div class="spin">Loading…</div>';
+  try{
+    const {leaderboards} = await (await fetch('/api/leaderboard')).json();
+    $('#board').innerHTML = (leaderboards && leaderboards.length) ? boardsHTML(leaderboards)
+      : '<div class="spin">No graded games yet. Use “Predict a game”, or run <code>sportsbench predict</code> then <code>sportsbench grade</code>, then reopen this tab.</div>';
+  }catch(e){ $('#board').innerHTML='<div class="spin">Failed to load.</div>'; }
 }
 
 $('#loadfx').onclick = loadFixtures;

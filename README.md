@@ -51,6 +51,20 @@ site shows: **win rate barely separates the models — calibration does**, and f
 every pick bleeds the margin (which is why the value finder matters). On some markets the
 sharp models genuinely clear it — corners O/U runs positive ROI in the demo.
 
+## A dashboard, not just a CLI
+
+Prefer clicking to typing? Launch the local web dashboard — no extra install, your
+keys stay on your machine:
+
+```bash
+sportsbench serve           # opens http://127.0.0.1:8787
+```
+
+- **Benchmark** — the offline demo leaderboards, one per market, in 10 seconds (no keys).
+- **Predict a game** — pick a fixture from any source, run every model across your
+  markets, read the snapshot (probabilities, consensus, value vs the book).
+- **Leaderboard** — your locally graded standings.
+
 ## Run it for real
 
 ```bash
