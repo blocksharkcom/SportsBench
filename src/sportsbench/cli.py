@@ -4,11 +4,12 @@
   sportsbench models                   list configured models
   sportsbench backtest --demo          instant offline leaderboard (no keys)
   sportsbench predict --source demo    run your models on fixtures
+  sportsbench fixtures --live          real upcoming events + odds (free modelfights.com key)
+  sportsbench predict -s modelfights   predict on real events from modelfights.com
   sportsbench grade                    grade stored predictions vs results
   sportsbench leaderboard              show the standings
   sportsbench value                    find value bets vs the bookmaker
   sportsbench report --html out.html   export a branded leaderboard
-  sportsbench fixtures --live          [PRO] managed live fixtures + odds
   sportsbench publish                  [PRO] push leaderboard to modelfights.com
 """
 from __future__ import annotations
@@ -104,7 +105,8 @@ def backtest(
 
 @app.command()
 def predict(
-    source: str = typer.Option("demo", "--source", "-s", help="demo|json|football-data|pro"),
+    source: str = typer.Option("demo", "--source", "-s",
+                               help="demo | modelfights (free key) | football-data | json"),
     league: Optional[str] = typer.Option(None, "--league", "-l"),
     limit: int = typer.Option(20, "--limit", "-n"),
     fixtures_path: Optional[str] = typer.Option(None, "--fixtures"),
@@ -129,6 +131,89 @@ def predict(
     ok = sum(1 for p in preds if not p.error)
     console.print(f"\n[green]Stored {ok}/{len(preds)} predictions[/green] "
                   f"({len(preds)-ok} errors recorded) → {db}")
+    show_banner(console, cfg.branding)
+
+
+@app.command()
+def game(
+    fixture_id: Optional[str] = typer.Argument(None, help="Fixture id (from `fixtures --live`). Omit to pick one."),
+    source: str = typer.Option("modelfights", "--source", "-s",
+                               help="modelfights (free key) | demo | football-data"),
+    league: Optional[str] = typer.Option(None, "--league", "-l"),
+    db: str = typer.Option("sportsbench.db", "--db"),
+    config: Optional[str] = typer.Option(None, "--config", "-c"),
+):
+    """Get every model's call on ONE specific game — a full prediction snapshot.
+
+    Shows the fixture, the odds, each model's pick + probabilities + reasoning, the
+    consensus, and where the models beat the bookmaker's price.
+    """
+    from .sources import get_source
+    from .pro import ModelFightsClient, NeedsKey, NeedsPro, ProError
+    from .value import consensus, find_value
+    from .brief import market_for
+    cfg = _cfg(config)
+    if not cfg.active_models():
+        console.print("[red]No models configured.[/red] Run [bold]sportsbench init[/bold] and add keys.")
+        raise typer.Exit(1)
+    try:
+        src = (get_source("modelfights", client=ModelFightsClient(cfg))
+               if source in ("modelfights", "mf", "pro", "live") else get_source(source))
+        fixtures = src.upcoming(league, 50)
+    except (NeedsKey, NeedsPro, ProError) as e:
+        console.print(f"[yellow]{e}[/yellow]")
+        raise typer.Exit(2)
+    if not fixtures:
+        console.print("[yellow]No upcoming fixtures from this source.[/yellow]")
+        raise typer.Exit(1)
+
+    fx = next((f for f in fixtures if f.id == fixture_id), None) if fixture_id else None
+    if fx is None:
+        if fixture_id:
+            console.print(f"[yellow]Fixture {fixture_id} not found in upcoming list.[/yellow]")
+        tbl = Table("#", "Fixture", "League", "Kickoff", title="Upcoming games")
+        for i, f in enumerate(fixtures[:25], 1):
+            tbl.add_row(str(i), f.label(), f.league, f.kickoff)
+        console.print(tbl)
+        choice = typer.prompt("Pick a game number", type=int)
+        if not (1 <= choice <= min(25, len(fixtures))):
+            raise typer.Exit(1)
+        fx = fixtures[choice - 1]
+
+    market = market_for(fx)
+    console.print(f"\n[bold]{fx.label()}[/bold]  [dim]· {fx.league} · {fx.kickoff}[/dim]")
+    if fx.odds:
+        console.print("  Market odds  " + "  ".join(
+            f"{m}: [bold]{fx.odds.price(m)}[/bold]" for m in market if fx.odds.price(m)))
+    console.print(f"  Running {len(cfg.active_models())} models…\n")
+
+    preds = run_predictions(cfg, [fx], on_done=_tick)
+    Store(db).save_fixtures([fx])
+    Store(db).save_predictions(preds)
+
+    t = Table("Model", *[m.capitalize() for m in market], "Pick", "Conf", "Why",
+              title=f"Snapshot · {fx.label()}")
+    for p in sorted(preds, key=lambda x: (x.error is not None, -x.confidence)):
+        if p.error:
+            t.add_row(p.model, *["—"] * len(market), "[red]error[/red]", "—", p.error[:40])
+            continue
+        cells = [f"{p.probs.get(m,0):.0%}" for m in market]
+        t.add_row(p.model, *cells, f"[green]{p.pick}[/green]", f"{p.confidence:.0%}",
+                  (p.rationale or "")[:46])
+    cons = consensus([p for p in preds if not p.error], market)
+    t.add_section()
+    t.add_row("[bold]CONSENSUS[/bold]", *[f"[bold]{cons.get(m,0):.0%}[/bold]" for m in market],
+              f"[bold]{max(cons, key=cons.get)}[/bold]", "", "")
+    console.print(t)
+
+    bets = find_value([fx], preds, min_edge=0.03, kelly_fraction=cfg.kelly_fraction,
+                      devig_method=cfg.devig, source="consensus")
+    if bets:
+        console.print("\n[bold]Value vs the bookmaker:[/bold]")
+        for b in bets:
+            console.print(f"  {b.pick:5s}  consensus {b.model_prob:.0%} vs fair {b.fair_prob:.0%} "
+                          f"@ {b.decimal_odds:g}  [green]edge {b.edge:+.0%}[/green]  kelly {b.kelly:.1%}")
+    console.print("[dim]Informational only — not betting advice.[/dim]")
     show_banner(console, cfg.branding)
 
 
@@ -222,19 +307,21 @@ def report(
 
 @app.command()
 def fixtures(
-    live: bool = typer.Option(False, "--live", help="[PRO] managed fixtures + odds."),
+    live: bool = typer.Option(False, "--live",
+                              help="Fetch real upcoming events from modelfights.com (free key)."),
     league: Optional[str] = typer.Option(None, "--league", "-l"),
     limit: int = typer.Option(20, "--limit", "-n"),
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
-    """List fixtures. --live uses the Pro managed feed (no third-party keys)."""
-    from .pro import ProClient, NeedsPro, ProError
+    """List fixtures. --live pulls real upcoming events + odds from modelfights.com
+    (free — just sign up for a key). Without --live, shows the offline demo set."""
+    from .pro import ModelFightsClient, NeedsKey, NeedsPro, ProError
     from .sources import get_source
     cfg = _cfg(config)
     try:
-        src = get_source("pro", client=ProClient(cfg)) if live else get_source("demo")
+        src = get_source("modelfights", client=ModelFightsClient(cfg)) if live else get_source("demo")
         fx = src.upcoming(league, limit)
-    except (NeedsPro, ProError) as e:
+    except (NeedsKey, NeedsPro, ProError) as e:
         console.print(f"[yellow]{e}[/yellow]")
         raise typer.Exit(2)
     t = Table("ID", "League", "Fixture", "Kickoff", "Odds", title="Fixtures")
@@ -253,13 +340,13 @@ def publish(
     config: Optional[str] = typer.Option(None, "--config", "-c"),
 ):
     """[PRO] Publish your leaderboard to a shareable public page on modelfights.com."""
-    from .pro import ProClient, NeedsPro, ProError
+    from .pro import ModelFightsClient, NeedsKey, NeedsPro, ProError
     cfg = _cfg(config)
     store = Store(db)
     scores = rank(score_predictions(store.predictions(), store.results(), cfg.stake_unit))
     try:
-        url = ProClient(cfg).publish({"rows": [s.to_row() for s in scores]}, title)
-    except (NeedsPro, ProError) as e:
+        url = ModelFightsClient(cfg).publish({"rows": [s.to_row() for s in scores]}, title)
+    except (NeedsKey, NeedsPro, ProError) as e:
         console.print(f"[yellow]{e}[/yellow]")
         raise typer.Exit(2)
     console.print(f"[green]Published:[/green] {url}")
@@ -321,10 +408,13 @@ models:
     model: llama3
     # no key needed for local Ollama
 
-# Optional paid layer — unlocks live data, hosted runs, cloud publish.
-# Get a key at https://modelfights.com/sportsbench
-pro:
-  api_key_env: SPORTSBENCH_API_KEY
+# modelfights.com — the easiest way to get real data.
+#   FREE key (just sign up): fetch upcoming fixtures, events + odds across 45+ leagues
+#     ->  sportsbench predict --source modelfights --league epl
+#   PRO plan (same key): hosted model runs (no LLM keys needed) + cloud publish
+# Get your free key at https://modelfights.com/sportsbench
+modelfights:
+  api_key_env: MODELFIGHTS_API_KEY
   base_url: https://modelfights.com/v1
 """
 

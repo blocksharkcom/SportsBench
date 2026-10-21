@@ -39,8 +39,11 @@ class ModelConfig:
 
 
 @dataclass
-class ProConfig:
-    api_key_env: str = "SPORTSBENCH_API_KEY"
+class ModelFightsConfig:
+    """Connection to modelfights.com. A FREE key (just sign up) fetches fixtures,
+    upcoming events and results. A paid Pro plan on the same key additionally
+    unlocks hosted model runs and cloud publishing."""
+    api_key_env: str = "MODELFIGHTS_API_KEY"
     base_url: str = "https://modelfights.com/v1"
 
     def api_key(self) -> Optional[str]:
@@ -59,7 +62,7 @@ class Config:
     stake_unit: float = 1.0
     kelly_fraction: float = 0.25
     branding: bool = True
-    pro: ProConfig = field(default_factory=ProConfig)
+    modelfights: ModelFightsConfig = field(default_factory=ModelFightsConfig)
     path: Optional[str] = None
 
     def active_models(self) -> list[ModelConfig]:
@@ -84,7 +87,7 @@ class Config:
             raise RuntimeError("pyyaml is required to read config (pip install pyyaml)")
         data = yaml.safe_load(Path(path).read_text()) or {}
         defaults = data.get("defaults", {})
-        pro = data.get("pro", {})
+        mf = data.get("modelfights") or data.get("pro") or {}  # 'pro' kept for back-compat
         models = [ModelConfig(**m) for m in data.get("models", [])]
         return cls(
             models=models,
@@ -93,6 +96,6 @@ class Config:
             stake_unit=float(defaults.get("stake_unit", 1.0)),
             kelly_fraction=float(defaults.get("kelly_fraction", 0.25)),
             branding=bool(data.get("branding", True)),
-            pro=ProConfig(**pro) if pro else ProConfig(),
+            modelfights=ModelFightsConfig(**mf) if mf else ModelFightsConfig(),
             path=path,
         )

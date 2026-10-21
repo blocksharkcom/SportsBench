@@ -61,11 +61,45 @@ sportsbench value --min-edge 0.05    # where the models beat the bookmaker's pri
 sportsbench report --html out.html   # a shareable, branded leaderboard page
 ```
 
-Point it at real fixtures with the free [football-data.org](https://www.football-data.org) tier, your own CSV/JSON, or the Pro live feed:
+### Get real games the easy way (free)
+
+Sign up at **[modelfights.com](https://modelfights.com/sportsbench)** for a **free API key** and pull real upcoming fixtures, events and odds across 45+ leagues — no other data keys to juggle:
 
 ```bash
-export FOOTBALL_DATA_API_KEY=...      # free key
+export MODELFIGHTS_API_KEY=...                 # free, from modelfights.com
+sportsbench fixtures --live --league epl       # see what's on
+sportsbench predict  --source modelfights --league epl
+```
+
+Prefer another feed? The free [football-data.org](https://www.football-data.org) tier and your own CSV/JSON work too:
+
+```bash
+export FOOTBALL_DATA_API_KEY=...
 sportsbench predict --source football-data --league epl
+```
+
+### Predict one specific game
+
+Want every model's call on a single upcoming match? That's `game` — a full prediction snapshot:
+
+```bash
+sportsbench game --source modelfights --league epl     # pick from the upcoming list
+sportsbench game 12345 --source modelfights            # or a specific fixture id
+```
+
+```
+Arsenal vs Chelsea  · Premier League · 2026-05-04T15:00Z
+  Market odds  home: 1.95  draw: 3.70  away: 4.10
+                      Snapshot · Arsenal vs Chelsea
+ Model             Home   Draw   Away   Pick   Conf   Why
+ GPT-5             58%    24%    18%    home   58%    Arsenal's press travels; Chelsea thin at the back
+ Claude Opus 4.8   54%    27%    19%    home   54%    Home edge + xG trend, but draw underpriced
+ Gemini 3 Pro      50%    26%    24%    home   50%    …
+ ─────────────────────────────────────────────────────
+ CONSENSUS         54%    26%    20%    home
+
+Value vs the bookmaker:
+  draw   consensus 26% vs fair 25% @ 3.70   edge +4%   kelly 1.1%
 ```
 
 ## Value bets — the bettor's view

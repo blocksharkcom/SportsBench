@@ -13,7 +13,7 @@ def get_source(name: str, **kwargs) -> FixtureSource:
     if name in ("football-data", "football-data.org", "footballdata"):
         from .footballdata import FootballDataSource
         return FootballDataSource(kwargs.get("api_key"))
-    if name in ("pro", "live", "modelfights"):
-        from ..pro import ProLiveSource
-        return ProLiveSource(kwargs.get("client"))
+    if name in ("modelfights", "mf", "pro", "live"):
+        from ..pro import ModelFightsSource
+        return ModelFightsSource(kwargs.get("client"))
     raise ValueError(f"unknown source: {name}")
