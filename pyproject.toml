@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sportsbench"
+version = "0.1.0"
+description = "The open benchmark for LLM sports prediction — can GPT-5, Claude, Gemini & Grok beat the bookmakers? Graded in public."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "ModelFights", email = "hello@modelfights.com" }]
+keywords = [
+    "llm", "benchmark", "sports-prediction", "sports-betting", "ai-agents",
+    "forecasting", "openai", "anthropic", "gemini", "grok", "ollama",
+    "calibration", "closing-line-value", "kelly",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "httpx>=0.24",
+    "typer>=0.9",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[project.urls]
+Homepage = "https://modelfights.com"
+"Live leaderboard" = "https://modelfights.com/leaderboard"
+Source = "https://github.com/blockshark/sportsbench"
+Issues = "https://github.com/blockshark/sportsbench/issues"
+
+[project.scripts]
+sportsbench = "sportsbench.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sportsbench = ["data/*.json"]
