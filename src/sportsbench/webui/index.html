@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SportsBench — dashboard</title>
+<style>
+  :root{
+    --bg:#0a0d14; --surface:#10141d; --surface2:#161b26; --border:#1d2432;
+    --fg:#e8edf5; --muted:#8b97a8; --accent:#22c55e; --accent2:#a9c0ff;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;}
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+  header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#0c1119,transparent)}
+  .brand{display:flex;align-items:center;gap:10px;padding:18px 0}
+  .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#07110a;
+    display:grid;place-items:center;font-weight:800;font-size:16px}
+  .brand h1{font-size:18px;margin:0;letter-spacing:-.01em}
+  .brand .sub{color:var(--muted);font-size:12.5px;margin-left:auto}
+  nav{display:flex;gap:4px;padding-bottom:0}
+  nav button{background:none;border:0;color:var(--muted);font:inherit;font-size:13.5px;
+    font-weight:600;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent}
+  nav button.active{color:var(--fg);border-bottom-color:var(--accent)}
+  main{padding:28px 0 80px}
+  h2{font-size:20px;letter-spacing:-.01em;margin:0 0 4px}
+  .lede{color:var(--muted);font-size:14px;margin:0 0 20px}
+  .cfg{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}
+  .chip{font-size:12px;border:1px solid var(--border);background:var(--surface);
+    border-radius:999px;padding:4px 11px;color:var(--muted)}
+  .chip b{color:var(--fg);font-weight:600}
+  .chip.ok{border-color:rgba(34,197,94,.4)} .chip.ok b{color:var(--accent)}
+  .chip.off b{color:#ef6b6b}
+  .board{border:1px solid var(--border);border-radius:14px;overflow:hidden;margin:18px 0;background:var(--surface)}
+  .board h3{margin:0;padding:12px 16px;font-size:14px;background:var(--surface2);
+    border-bottom:1px solid var(--border);font-weight:600}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th,td{padding:9px 14px;text-align:right;border-bottom:1px solid var(--border);font-size:13px}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  th:nth-child(2),td:nth-child(2){text-align:left}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:first-child td{color:var(--accent);font-weight:700}
+  .pos{color:var(--accent)} .neg{color:#ef6b6b}
+  .muted{color:var(--muted)} .center{text-align:center;padding:40px;color:var(--muted)}
+  footer{border-top:1px solid var(--border);color:var(--muted);font-size:13px;padding:20px 0}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">
+    <div class="logo">S</div>
+    <h1>SportsBench</h1>
+    <span class="sub" id="ver"></span>
+  </div>
+  <nav>
+    <button data-tab="demo" class="active">Benchmark (demo)</button>
+    <button data-tab="game">Predict a game</button>
+    <button data-tab="board">Leaderboard</button>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <section id="tab-demo">
+    <h2>Benchmark — offline demo</h2>
+    <p class="lede">A graded leaderboard per market, from the bundled sample. No API keys needed —
+      this is what a visitor sees in 10 seconds. Ranked by Brier (calibration).</p>
+    <div class="cfg" id="cfg"></div>
+    <div id="demo"><div class="center">Loading…</div></div>
+  </section>
+
+  <section id="tab-game" hidden>
+    <h2>Predict a game</h2>
+    <p class="lede">Pick a fixture, run every configured model across your markets, read the snapshot.
+      <span class="muted">(Coming in the next build.)</span></p>
+  </section>
+
+  <section id="tab-board" hidden>
+    <h2>Your leaderboard</h2>
+    <p class="lede">Standings from games you've run and graded locally.
+      <span class="muted">(Coming in the next build.)</span></p>
+  </section>
+</main>
+
+<footer><div class="wrap">
+  SportsBench · the open benchmark for LLM sports prediction ·
+  <a href="https://modelfights.com" target="_blank">modelfights.com</a> ·
+  <a href="https://github.com/blocksharkcom/SportsBench" target="_blank">GitHub</a>
+</div></footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = (v, suf="") => v==null ? "—" : (v+suf);
+const signed = v => v==null ? "—" : `<span class="${v>=0?'pos':'neg'}">${v>0?'+':''}${v}%</span>`;
+
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
+  for(const t of ['demo','game','board']) $('#tab-'+t).hidden = (t!==b.dataset.tab);
+});
+
+async function loadState(){
+  const s = await (await fetch('/api/state')).json();
+  $('#ver').textContent = 'v'+s.version;
+  const chips = [];
+  chips.push(`<span class="chip ${s.modelfights_key?'ok':'off'}">modelfights.com <b>${s.modelfights_key?'connected':'no key'}</b></span>`);
+  const withKey = s.models.filter(m=>m.has_key).length;
+  chips.push(`<span class="chip">models <b>${s.models.length}</b></span>`);
+  chips.push(`<span class="chip ${withKey?'ok':'off'}">with keys <b>${withKey}</b></span>`);
+  $('#cfg').innerHTML = chips.join('');
+}
+
+async function loadDemo(){
+  const {leaderboards} = await (await fetch('/api/demo')).json();
+  $('#demo').innerHTML = leaderboards.map(lb=>`
+    <div class="board">
+      <h3>${lb.name} <span class="muted">· ${lb.market}</span></h3>
+      <table>
+        <thead><tr><th>#</th><th>Model</th><th>Picks</th><th>Win%</th><th>Brier</th>
+          <th>ROI</th><th>Units</th><th>CLV</th><th>ECE</th></tr></thead>
+        <tbody>${lb.rows.map((r,i)=>`<tr>
+          <td>${i+1}</td><td>${r.model}</td><td>${r.settled}</td>
+          <td>${fmt(r.win_rate,'%')}</td><td>${fmt(r.brier)}</td>
+          <td>${signed(r.roi)}</td><td>${fmt(r.units)}</td>
+          <td>${fmt(r.clv,'%')}</td><td>${fmt(r.ece)}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>`).join('');
+}
+
+loadState().catch(()=>{});
+loadDemo().catch(e=>$('#demo').innerHTML='<div class="center">Failed to load.</div>');
+</script>
+</body>
+</html>

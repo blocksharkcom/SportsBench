@@ -47,6 +47,18 @@ def version():
 
 
 @app.command()
+def serve(
+    port: int = typer.Option(8787, "--port", "-p"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    no_open: bool = typer.Option(False, "--no-open", help="Don't open a browser."),
+    config: Optional[str] = typer.Option(None, "--config", "-c"),
+):
+    """Launch the local dashboard — read data and run models in your browser."""
+    from .webui import serve as _serve
+    _serve(host=host, port=port, open_browser=not no_open, config=_cfg(config))
+
+
+@app.command()
 def init(path: str = "sportsbench.config.yaml"):
     """Write a starter config you can edit."""
     if Path(path).exists():
