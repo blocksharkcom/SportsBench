@@ -117,6 +117,7 @@
 const $ = s => document.querySelector(s);
 const fmt = (v, suf="") => v==null ? "—" : (v+suf);
 const signed = v => v==null ? "—" : `<span class="${v>=0?'pos':'neg'}">${v>0?'+':''}${v}%</span>`;
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
@@ -138,12 +139,12 @@ async function loadState(){
 function boardsHTML(leaderboards){
   return leaderboards.map(lb=>`
     <div class="board">
-      <h3>${lb.name} <span class="muted">· ${lb.market}</span></h3>
+      <h3>${esc(lb.name)} <span class="muted">· ${esc(lb.market)}</span></h3>
       <table>
         <thead><tr><th>#</th><th>Model</th><th>Picks</th><th>Win%</th><th>Brier</th>
           <th>ROI</th><th>Units</th><th>CLV</th><th>ECE</th></tr></thead>
         <tbody>${lb.rows.map((r,i)=>`<tr>
-          <td>${i+1}</td><td>${r.model}</td><td>${r.settled}</td>
+          <td>${i+1}</td><td>${esc(r.model)}</td><td>${r.settled}</td>
           <td>${fmt(r.win_rate,'%')}</td><td>${fmt(r.brier)}</td>
           <td>${signed(r.roi)}</td><td>${fmt(r.units)}</td>
           <td>${fmt(r.clv,'%')}</td><td>${fmt(r.ece)}</td></tr>`).join('')}</tbody>
@@ -163,37 +164,42 @@ async function loadBoard(){
   }catch(e){ $('#board').innerHTML='<div class="spin">Failed to load.</div>'; }
 }
 
+let FX = [], FXSRC = 'demo';
 $('#loadfx').onclick = loadFixtures;
 async function loadFixtures(){
   const src=$('#src').value, league=$('#league').value.trim();
+  FXSRC = src;
   $('#fixtures').innerHTML='<div class="spin">Loading fixtures…</div>'; $('#snapshot').innerHTML='';
   try{
     const d = await (await fetch(`/api/fixtures?source=${encodeURIComponent(src)}&league=${encodeURIComponent(league)}&limit=25`)).json();
-    if(d.error){ $('#fixtures').innerHTML=`<div class="spin">${d.error}</div>`; return; }
+    if(d.error){ $('#fixtures').innerHTML=`<div class="spin">${esc(d.error)}</div>`; return; }
     if(!d.fixtures.length){ $('#fixtures').innerHTML='<div class="spin">No fixtures found.</div>'; return; }
-    $('#fixtures').innerHTML='<div class="fxlist">'+d.fixtures.map(f=>`
-      <div class="fx"><div><b>${f.label}</b> <span class="meta">· ${f.league} · ${f.kickoff}</span></div>
-      <button onclick="runGame('${f.id.replace(/'/g,"")}','${src}')">Run models →</button></div>`).join('')+'</div>';
+    FX = d.fixtures;
+    $('#fixtures').innerHTML='<div class="fxlist">'+FX.map((f,i)=>`
+      <div class="fx"><div><b>${esc(f.label)}</b> <span class="meta">· ${esc(f.league)} · ${esc(f.kickoff)}</span></div>
+      <button onclick="runGame(${i})">Run models →</button></div>`).join('')+'</div>';
   }catch(e){ $('#fixtures').innerHTML='<div class="spin">Failed to load fixtures.</div>'; }
 }
-async function runGame(id, src){
+async function runGame(i){
+  const f = FX[i];
+  if(!f) return;
   $('#snapshot').innerHTML='<div class="spin">Running models… this can take a moment.</div>';
   try{
     const d = await (await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({fixture_id:id, source:src})})).json();
-    if(d.error){ $('#snapshot').innerHTML=`<div class="spin">${d.error}</div>`; return; }
-    $('#snapshot').innerHTML=`<h3 style="margin:22px 0 2px">${d.fixture.label} <span class="muted">· ${d.fixture.league}</span></h3>`
+      body:JSON.stringify({fixture_id:f.id, source:FXSRC})})).json();
+    if(d.error){ $('#snapshot').innerHTML=`<div class="spin">${esc(d.error)}</div>`; return; }
+    $('#snapshot').innerHTML=`<h3 style="margin:22px 0 2px">${esc(d.fixture.label)} <span class="muted">· ${esc(d.fixture.league)}</span></h3>`
       + d.markets.map(renderMarket).join('');
   }catch(e){ $('#snapshot').innerHTML='<div class="spin">Run failed.</div>'; }
 }
 function renderMarket(m){
-  const odds = Object.entries(m.odds||{}).map(([k,v])=>`${k}:${v}`).join(' ');
+  const odds = Object.entries(m.odds||{}).map(([k,v])=>`${esc(k)}:${Number(v)}`).join(' ');
   const rows = m.rows.map(r => r.error
-    ? `<tr><td style="text-align:left">${r.model}</td><td colspan="3" class="neg" style="text-align:left">${r.error}</td></tr>`
-    : `<tr><td style="text-align:left">${r.model}</td><td style="text-align:left">${r.pick}</td><td>${(r.p*100).toFixed(0)}%</td><td>${(r.conf*100).toFixed(0)}%</td></tr>`).join('');
-  const cons = m.consensus ? `<tr style="border-top:2px solid var(--border)"><td style="text-align:left"><b>Consensus</b></td><td style="text-align:left"><b class="pos">${m.consensus.pick}</b></td><td><b>${(m.consensus.p*100).toFixed(0)}%</b></td><td></td></tr>`:'';
-  const val = (m.value||[]).map(v=>`<div class="val">value · ${v.label}: ${(v.model_prob*100).toFixed(0)}% vs fair ${(v.fair_prob*100).toFixed(0)}% @ ${v.odds} · edge +${(v.edge*100).toFixed(0)}% · kelly ${(v.kelly*100).toFixed(1)}%</div>`).join('');
-  return `<div class="board"><h3>${m.name} <span class="muted">${odds?'· '+odds:''}</span></h3>
+    ? `<tr><td style="text-align:left">${esc(r.model)}</td><td colspan="3" class="neg" style="text-align:left">${esc(r.error)}</td></tr>`
+    : `<tr><td style="text-align:left">${esc(r.model)}</td><td style="text-align:left">${esc(r.pick)}</td><td>${(r.p*100).toFixed(0)}%</td><td>${(r.conf*100).toFixed(0)}%</td></tr>`).join('');
+  const cons = m.consensus ? `<tr style="border-top:2px solid var(--border)"><td style="text-align:left"><b>Consensus</b></td><td style="text-align:left"><b class="pos">${esc(m.consensus.pick)}</b></td><td><b>${(m.consensus.p*100).toFixed(0)}%</b></td><td></td></tr>`:'';
+  const val = (m.value||[]).map(v=>`<div class="val">value · ${esc(v.label)}: ${(v.model_prob*100).toFixed(0)}% vs fair ${(v.fair_prob*100).toFixed(0)}% @ ${Number(v.odds)} · edge +${(v.edge*100).toFixed(0)}% · kelly ${(v.kelly*100).toFixed(1)}%</div>`).join('');
+  return `<div class="board"><h3>${esc(m.name)} <span class="muted">${odds?'· '+odds:''}</span></h3>
     <table><thead><tr><th style="text-align:left">Model</th><th style="text-align:left">Pick</th><th>P(pick)</th><th>Conf</th></tr></thead>
     <tbody>${rows}${cons}</tbody></table>${val}</div>`;
 }

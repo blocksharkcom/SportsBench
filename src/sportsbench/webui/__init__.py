@@ -49,9 +49,27 @@ def _demo_leaderboards() -> list:
 
 class _Handler(BaseHTTPRequestHandler):
     cfg: Config = None  # type: ignore[assignment]
+    port: int = 8787
 
     def log_message(self, *a):  # quiet
         pass
+
+    def _guard(self) -> bool:
+        """Defend a local server against malicious web pages: reject requests
+        whose Host isn't our loopback address (DNS-rebinding) or whose Origin is
+        cross-site (CSRF). This also closes the only cross-origin SSRF vector —
+        a page can't make us call our data sources with the user's keys."""
+        p = _Handler.port
+        hosts = {f"127.0.0.1:{p}", f"localhost:{p}", f"[::1]:{p}"}
+        host = (self.headers.get("Host") or "").lower()
+        if host and host not in hosts:
+            self._json(403, {"error": "forbidden_host"})
+            return False
+        origin = self.headers.get("Origin")
+        if origin and origin.lower() not in {f"http://{h}" for h in hosts}:
+            self._json(403, {"error": "cross_origin_blocked"})
+            return False
+        return True
 
     def _send(self, code: int, body, ctype="application/json"):
         data = body.encode() if isinstance(body, str) else body
@@ -65,6 +83,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj))
 
     def do_GET(self):
+        if not self._guard():
+            return
         u = urlparse(self.path)
         try:
             if u.path in ("/", "/index.html"):
@@ -82,6 +102,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(500, {"error": f"{type(e).__name__}: {e}"})
 
     def do_POST(self):
+        if not self._guard():
+            return
         u = urlparse(self.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -190,6 +212,7 @@ class _Handler(BaseHTTPRequestHandler):
 def serve(host: str = "127.0.0.1", port: int = 8787, open_browser: bool = True,
           config: Config | None = None) -> None:
     _Handler.cfg = config or Config.load()
+    _Handler.port = port
     httpd = ThreadingHTTPServer((host, port), _Handler)
     url = f"http://{host}:{port}"
     print(f"SportsBench dashboard → {url}   (Ctrl-C to stop)")
