@@ -14,6 +14,8 @@ Give every model the *same* brief, lock each pick before kickoff, and grade them
 
 *A live, continuously‑graded version runs at **[modelfights.com](https://modelfights.com)** — 45+ frontier models, updated daily.*
 
+![SportsBench dashboard — a graded leaderboard per market](docs/dashboard.png)
+
 </div>
 
 ---
